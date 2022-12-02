@@ -14,14 +14,15 @@ using namespace std;
 #define SYN 0b0001;
 #define ACK 0b0010;
 #define FIN 0b0100;
-#define END 0b10000000;
+#define STA 0b00001000;  //文件第一个包
+#define END 0b10000000;  //文件最后一个包
 
-enum PROTOCAL{stopAndWait,GBN_oneThread,GBN_mulThread} protocal=GBN_mulThread;
+enum PROTOCAL{stopAndWait,GBN_oneThread,GBN_mulThread} protocal=GBN_oneThread;
 
 long long head, tail, freq;  //timers
 uint32_t sendByteCnt=0;
 
-int timeout=100;  //0.1s
+int timeout=1000;  //1s
 int timeOutCnt=0;  //超时重传次数
 const int fileNum=4;
 string dir="test/";
@@ -256,11 +257,11 @@ int rdt_sendPkg_GBN_oneThread(Package send)
     }
     if((int(getFlag())|0)==0b0010 && cal_checkSum()==getCheckSum())  //收到ACK
     {
-        if(getAckNum()<=nextseqnum)  //防止上一个文件的ack被误接受
+        //if(getAckNum()<=nextseqnum)  //防止上一个文件的ack被误接受
         {
             base=getAckNum()+1;
             cout<<"[LOG]: "<<"WINDOW "<<"base:"<<base<<"\t""nextseqnum:"<<nextseqnum<<endl;
-            sendBufQueue.pop();
+            while(sendBufQueue.size()>0 && sendBufQueue.front().seqNum<=getAckNum())sendBufQueue.pop();
             if(base==nextseqnum) isTimerOn=0;
             else
             {
@@ -275,6 +276,7 @@ int rdt_sendPkg_GBN_oneThread(Package send)
     if(( tailGBN-headGBN) * 1000.0 / freq > timeout && isTimerOn)  //ms
     {
         cout<<"time out"<<endl;
+        timeOutCnt++;
         Package send=sendBufQueue.front();
         sendBuf=toCharStar(send);
         sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
@@ -308,15 +310,26 @@ int rdt_sendPkg_GBN_mulThread(Package send)
     //判断定时器
     QueryPerformanceCounter((LARGE_INTEGER*)&tailGBN);
     //cout<<"tailGBN-headGBN:"<<(tailGBN-headGBN) * 1000.0 / freq<<"\t"<<"timeout:"<<timeout<<endl;
-    if(( tailGBN-headGBN) * 1000.0 / freq > timeout && isTimerOn)  //ms
+    if((tailGBN-headGBN) * 1000.0 / freq > timeout && isTimerOn)  //ms
     {
-        cout<<"time out"<<endl;
-        Package send=sendBufQueue.front();
-        sendBuf=toCharStar(send);
-        sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
-        sendByteCnt+=send.getByteLength();
-        cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
-            <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
+        cout<<"sendBufQueue.size:"<<sendBufQueue.size()<<endl;
+        if(sendBufQueue.size()>0)
+        {
+            cout<<"time out"<<endl;
+            timeOutCnt++;
+            int iter=sendBufQueue.size();
+            for(int i=0;i<iter;i++)
+            {
+                Package send=sendBufQueue.front();
+                sendBufQueue.pop();
+                sendBufQueue.push(send);  //queue没有迭代器，于是用这种pop再push的方法完成，对其中所有元素重传
+                sendBuf=toCharStar(send);
+                sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
+                sendByteCnt+=send.getByteLength();
+                cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
+                    <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
+            }
+        }
         isTimerOn=1;
         QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
         QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
@@ -331,6 +344,7 @@ int rdt_sendPkg_GBN_mulThread(Package send)
         <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
     if(base==nextseqnum)
     {
+        isTimerOn=1;
         QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
         QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
     }
@@ -343,7 +357,7 @@ DWORD WINAPI recv_gbn(LPVOID lparam)//接受信息的线程
     while(1)
     {
         //接受ACK
-        setsockopt(sockSrv,SOL_SOCKET,SO_RCVTIMEO,(char*)&recvPatiency,sizeof(recvPatiency));
+        //setsockopt(sockSrv,SOL_SOCKET,SO_RCVTIMEO,(char*)&recvPatiency,sizeof(recvPatiency));
         recvfrom(sockSrv,recvBuf, bufLen, 0, (SOCKADDR *) & addrClient, &addrClientSize);
         cout<<"[LOG]: "<<"RECV "<<"seq:"<<getSeqNum()<<"\t"<<"ack:"<<getAckNum()<<"\t"
             <<"flags:"<<(int)getFlag()<<"\t"<<"checksum:"<<getCheckSum()<<"\t"<<"dataLength:"<<getDataLength()<<endl;
@@ -353,11 +367,11 @@ DWORD WINAPI recv_gbn(LPVOID lparam)//接受信息的线程
         }
         if((int(getFlag())|0)==0b0010 && cal_checkSum()==getCheckSum())  //收到ACK
         {
-            if(getAckNum()<=nextseqnum)  //防止上一个文件的ack被误接受
+            //if(getAckNum()<=nextseqnum)  //防止上一个文件的ack被误接受
             {
                 base=getAckNum()+1;
                 cout<<"[LOG]: "<<"WINDOW "<<"base:"<<base<<"\t""nextseqnum:"<<nextseqnum<<endl;
-                sendBufQueue.pop();
+                while(sendBufQueue.size()>0 && sendBufQueue.front().seqNum<=getAckNum())sendBufQueue.pop();
                 if(base==nextseqnum) isTimerOn=0;
                 else
                 {
@@ -369,11 +383,11 @@ DWORD WINAPI recv_gbn(LPVOID lparam)//接受信息的线程
         }
     }
 }
-
+uint32_t seqNum=0;
 int sendFile(string path)
 {
-    base=0;
-    nextseqnum=0;
+    //base=0;
+    //nextseqnum=0;
     ifstream ifs;
     ifs.open(path.c_str(),ios::binary);
     if(!ifs.is_open())
@@ -381,7 +395,8 @@ int sendFile(string path)
         cout<<"file open failed"<<endl;
         return 0;
     }
-    uint32_t seqNum=0;
+    cout<<"new file"<<endl;
+    //uint32_t seqNum=0;
     //发送@+文件名，seqNum=0
     Package send;
     send.seqNum=seqNum;
@@ -389,6 +404,7 @@ int sendFile(string path)
     send.data=new char[send.dataLength];
     strcpy(send.data,"@");
     strcat(send.data,path.substr(dir.length(),path.length()).c_str());  //将文件夹名去掉
+    send.flags=0|STA;
     send.checkSum=cal_checkSum(send);
     switch (protocal) {
         case stopAndWait:
@@ -432,6 +448,7 @@ int sendFile(string path)
         ifs.read(send.data,sliceSize);
         send.seqNum=(++seqNum);
         send.dataLength=sliceSize;
+        send.flags=0;
         send.checkSum=cal_checkSum(send);
 
         switch (protocal) {
@@ -502,6 +519,7 @@ int sendFile(string path)
             }
         }
     }
+    seqNum++;
     return 0;
 }
 

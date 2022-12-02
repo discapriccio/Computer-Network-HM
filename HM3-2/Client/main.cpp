@@ -14,14 +14,15 @@ using namespace std;
 #define SYN 0b0001;
 #define ACK 0b0010;
 #define FIN 0b0100;
-#define END 0b10000000;
+#define STA 0b00001000;  //文件第一个包
+#define END 0b10000000;  //文件最后一个包
 
 
 enum STATE{CLOSED,SEND_SYN,ESTABLISHED,FIN_WAIT_1,FIN_WAIT_2,TIME_WAIT} state;  //客户端生命周期
 int wrongCnt=0;  //校验和验证失败的包数量
 int oooCnt=0;  //out of order，失序的包的数量
 
-int timeout = 100; //0.1s
+int timeout = 1000; //1s
 const int fileNum=4;
 char* sendBuf;
 
@@ -236,11 +237,15 @@ void recvPkg_gbn(int& seqNum)  //GBN
         recvfrom(sockClient,recvBuf,bufLen,0,(SOCKADDR *) & addrSrv, &addrSrvSize);
         cout<<"[LOG]: "<<"RECV "<<"seq:"<<getSeqNum()<<"\t"<<"ack:"<<getAckNum()<<"\t"
             <<"flags:"<<(int)getFlag()<<"\t"<<"checksum:"<<getCheckSum()<<"\t"<<"dataLength:"<<getDataLength()<<endl;
+        //cout<<"here2"<<endl;
+        //cout<<"cal_checkSum:"<<cal_checkSum()<<endl;
+        //cout<<"getCheckSum:"<<getCheckSum()<<endl;
         if(cal_checkSum()!=getCheckSum())
         {
             wrongCnt++;
             continue;
         }
+        //cout<<"here1"<<endl;
         if((getSeqNum()==0 && seqNum==-1) || getSeqNum()==seqNum+1) {seqNum++; gotNew=1;}
         Package send;
         send.flags=0|ACK;
@@ -350,9 +355,11 @@ int main() {
     int acptSeqNum=-1;
     while(cnt<fileNum)
     {
-        //recvPkg(expectSeqNum);
+//        recvPkg(expectSeqNum);
         recvPkg_gbn(acptSeqNum);
-        if(recvBuf[packageLengthBeforeData]=='@'&& getSeqNum()==0)  //新文件
+        //if(recvBuf[packageLengthBeforeData]=='@'&& (uint8_t (getFlag())|0)==0b00001000)  //新文件
+        //cout<<int((getFlag()))<<endl;
+        if((int (getFlag()))==0b00001000)  //新文件
         {
             cout<<"new file!"<<endl;
             ofs.open("recv/"+toString(recvBuf,packageLengthBeforeData+1,getDataLength()),ios::trunc|ios::binary|ios::out);
@@ -378,8 +385,8 @@ int main() {
             cout<<"close file"<<endl;
             ofs.close();
             cnt++;
-            expectSeqNum=0;
-            acptSeqNum=-1;
+            //expectSeqNum=0;
+            //acptSeqNum=-1;
         }
     }
 
