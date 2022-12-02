@@ -1,0 +1,28 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+C:/Users/xingyu/Desktop/Computer-Network/lab code/HM3-2/Server/main.cpp
+iostream
+-
+WinSock2.h
+-
+windows.h
+-
+time.h
+-
+cmath
+-
+stdint.h
+-
+fstream
+-
+vector
+-
+queue
+-
+
