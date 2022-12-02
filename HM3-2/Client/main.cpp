@@ -228,6 +228,32 @@ void recvPkg(int& seqNum)  //停等机制，实现可靠数据传输,seqNum为�
         }
     }
 }
+void recvPkg_gbn(int& seqNum)  //GBN
+{
+    bool gotNew=0;
+    while(!gotNew)
+    {
+        recvfrom(sockClient,recvBuf,bufLen,0,(SOCKADDR *) & addrSrv, &addrSrvSize);
+        cout<<"[LOG]: "<<"RECV "<<"seq:"<<getSeqNum()<<"\t"<<"ack:"<<getAckNum()<<"\t"
+            <<"flags:"<<(int)getFlag()<<"\t"<<"checksum:"<<getCheckSum()<<"\t"<<"dataLength:"<<getDataLength()<<endl;
+        if(cal_checkSum()!=getCheckSum())
+        {
+            wrongCnt++;
+            continue;
+        }
+        if((getSeqNum()==0 && seqNum==-1) || getSeqNum()==seqNum+1) {seqNum++; gotNew=1;}
+        Package send;
+        send.flags=0|ACK;
+        send.ackNum=seqNum;
+        send.checkSum=cal_checkSum(send);
+        sendBuf=toCharStar(send);
+        sendto(sockClient,sendBuf,send.getByteLength(),0,(SOCKADDR*) &addrSrv, sizeof(addrSrv)); //发送ACK
+        cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
+            <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
+        delete sendBuf;
+    }
+}
+
 int main() {
 
     //初始化Socket DLL，协商使用的Socket版本
@@ -321,9 +347,11 @@ int main() {
     int cnt=0;
     ofstream ofs;
     int expectSeqNum=0;
+    int acptSeqNum=-1;
     while(cnt<fileNum)
     {
-        recvPkg(expectSeqNum);
+        //recvPkg(expectSeqNum);
+        recvPkg_gbn(acptSeqNum);
         if(recvBuf[packageLengthBeforeData]=='@'&& getSeqNum()==0)  //新文件
         {
             cout<<"new file!"<<endl;
@@ -351,6 +379,7 @@ int main() {
             ofs.close();
             cnt++;
             expectSeqNum=0;
+            acptSeqNum=-1;
         }
     }
 
@@ -432,5 +461,6 @@ int main() {
 
     cout<<"[LOG:] connection dismissed."<<endl;
     cout<<"Bye"<<endl;
+    system("pause");
     return 0;
 }

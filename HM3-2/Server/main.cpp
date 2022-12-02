@@ -16,6 +16,8 @@ using namespace std;
 #define FIN 0b0100;
 #define END 0b10000000;
 
+enum PROTOCAL{stopAndWait,GBN_oneThread,GBN_mulThread} protocal=GBN_mulThread;
+
 long long head, tail, freq;  //timers
 uint32_t sendByteCnt=0;
 
@@ -230,8 +232,8 @@ int sendPkg(Package send)  //停等机制，保证可靠传输  返回值：0—
 //GBN
 DWORD  dwThreadID;
 HANDLE hThread;
-uint32_t base=1;
-uint32_t nextseqnum=1;
+uint32_t base=0;
+uint32_t nextseqnum=0;
 const uint32_t N=10;
 queue<Package> sendBufQueue;
 
@@ -243,31 +245,23 @@ int recvPatiency=100;  //0.1s
 //流水线
 int rdt_sendPkg_GBN_oneThread(Package send)
 {
-    if(nextseqnum>=base+N) return 2;  //发送窗口已满
-    sendBufQueue.push(send);
-    sendBuf=toCharStar(send);
-    sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
-    sendByteCnt+=send.getByteLength();
-    cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
-        <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
-    if(base==nextseqnum)
-    {
-        QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
-        QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
-        nextseqnum++;
-    }
-
     //接受ACK
     setsockopt(sockSrv,SOL_SOCKET,SO_RCVTIMEO,(char*)&recvPatiency,sizeof(recvPatiency));
     recvfrom(sockSrv,recvBuf, bufLen, 0, (SOCKADDR *) & addrClient, &addrClientSize);
     cout<<"[LOG]: "<<"RECV "<<"seq:"<<getSeqNum()<<"\t"<<"ack:"<<getAckNum()<<"\t"
         <<"flags:"<<(int)getFlag()<<"\t"<<"checksum:"<<getCheckSum()<<"\t"<<"dataLength:"<<getDataLength()<<endl;
+    if((int(getFlag())|0)==0b0100)  //FIN
+    {
+        return 1;
+    }
     if((int(getFlag())|0)==0b0010 && cal_checkSum()==getCheckSum())  //收到ACK
     {
-        if(getAckNum()==base)
+        if(getAckNum()<=nextseqnum)  //防止上一个文件的ack被误接受
         {
             base=getAckNum()+1;
-            if(base=nextseqnum) isTimerOn=0;
+            cout<<"[LOG]: "<<"WINDOW "<<"base:"<<base<<"\t""nextseqnum:"<<nextseqnum<<endl;
+            sendBufQueue.pop();
+            if(base==nextseqnum) isTimerOn=0;
             else
             {
                 isTimerOn=1;
@@ -276,22 +270,58 @@ int rdt_sendPkg_GBN_oneThread(Package send)
             }
         }
     }
-
     //判断定时器
     QueryPerformanceCounter((LARGE_INTEGER*)&tailGBN);
-    if(( tail-head) * 1000.0 / freq > timeout)  //ms
+    if(( tailGBN-headGBN) * 1000.0 / freq > timeout && isTimerOn)  //ms
     {
+        cout<<"time out"<<endl;
         Package send=sendBufQueue.front();
         sendBuf=toCharStar(send);
         sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
         sendByteCnt+=send.getByteLength();
         cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
             <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
+        isTimerOn=1;
+        QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
+        QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
     }
+
+    if(nextseqnum>=base+N) return 2;  //发送窗口已满
+    sendBufQueue.push(send);
+    sendBuf=toCharStar(send);
+    sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
+    sendByteCnt+=send.getByteLength();
+    cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
+        <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
+    if(base==nextseqnum)
+    {
+        isTimerOn=1;
+        QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
+        QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
+    }
+    nextseqnum++;
+    cout<<"[LOG]: "<<"WINDOW "<<"base:"<<base<<"\t""nextseqnum:"<<nextseqnum<<endl;
 }
 
 int rdt_sendPkg_GBN_mulThread(Package send)
 {
+    //判断定时器
+    QueryPerformanceCounter((LARGE_INTEGER*)&tailGBN);
+    //cout<<"tailGBN-headGBN:"<<(tailGBN-headGBN) * 1000.0 / freq<<"\t"<<"timeout:"<<timeout<<endl;
+    if(( tailGBN-headGBN) * 1000.0 / freq > timeout && isTimerOn)  //ms
+    {
+        cout<<"time out"<<endl;
+        Package send=sendBufQueue.front();
+        sendBuf=toCharStar(send);
+        sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
+        sendByteCnt+=send.getByteLength();
+        cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
+            <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
+        isTimerOn=1;
+        QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
+        QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
+    }
+
     if(nextseqnum>=base+N) return 2;  //发送窗口已满
     sendBufQueue.push(send);
     sendBuf=toCharStar(send);
@@ -303,33 +333,47 @@ int rdt_sendPkg_GBN_mulThread(Package send)
     {
         QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
         QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
-        nextseqnum++;
     }
-
-    //判断定时器
-    QueryPerformanceCounter((LARGE_INTEGER*)&tailGBN);
-    if(( tail-head) * 1000.0 / freq > timeout)  //ms
-    {
-        Package send=sendBufQueue.front();
-        sendBuf=toCharStar(send);
-        sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
-        sendByteCnt+=send.getByteLength();
-        cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
-            <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
-    }
+    nextseqnum++;
+    cout<<"[LOG]: "<<"WINDOW "<<"base:"<<base<<"\t""nextseqnum:"<<nextseqnum<<endl;
 }
 
 DWORD WINAPI recv_gbn(LPVOID lparam)//接受信息的线程
 {
-
     while(1)
     {
-
+        //接受ACK
+        setsockopt(sockSrv,SOL_SOCKET,SO_RCVTIMEO,(char*)&recvPatiency,sizeof(recvPatiency));
+        recvfrom(sockSrv,recvBuf, bufLen, 0, (SOCKADDR *) & addrClient, &addrClientSize);
+        cout<<"[LOG]: "<<"RECV "<<"seq:"<<getSeqNum()<<"\t"<<"ack:"<<getAckNum()<<"\t"
+            <<"flags:"<<(int)getFlag()<<"\t"<<"checksum:"<<getCheckSum()<<"\t"<<"dataLength:"<<getDataLength()<<endl;
+        if((int(getFlag())|0)==0b0100)  //FIN
+        {
+            return 1;
+        }
+        if((int(getFlag())|0)==0b0010 && cal_checkSum()==getCheckSum())  //收到ACK
+        {
+            if(getAckNum()<=nextseqnum)  //防止上一个文件的ack被误接受
+            {
+                base=getAckNum()+1;
+                cout<<"[LOG]: "<<"WINDOW "<<"base:"<<base<<"\t""nextseqnum:"<<nextseqnum<<endl;
+                sendBufQueue.pop();
+                if(base==nextseqnum) isTimerOn=0;
+                else
+                {
+                    isTimerOn=1;
+                    QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
+                    QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
+                }
+            }
+        }
     }
 }
 
 int sendFile(string path)
 {
+    base=0;
+    nextseqnum=0;
     ifstream ifs;
     ifs.open(path.c_str(),ios::binary);
     if(!ifs.is_open())
@@ -346,10 +390,37 @@ int sendFile(string path)
     strcpy(send.data,"@");
     strcat(send.data,path.substr(dir.length(),path.length()).c_str());  //将文件夹名去掉
     send.checkSum=cal_checkSum(send);
-    if(sendPkg(send)==1)
-    {
-        return 1;  //FIN，该进入四次挥手
+    switch (protocal) {
+        case stopAndWait:
+        {
+            if(sendPkg(send)==1)
+            {
+                return 1;  //FIN，该进入四次挥手
+            }
+            break;
+        }
+        case GBN_oneThread:
+        {
+            while(true)
+            {
+                int ret= rdt_sendPkg_GBN_oneThread(send);
+                if(ret==1) return 1;
+                if(ret!=2) break;
+            }
+            break;
+        }
+        case GBN_mulThread:
+        {
+            while(true)
+            {
+                int ret= rdt_sendPkg_GBN_mulThread(send);
+                if(ret==1) return 1;
+                if(ret!=2) break;
+            }
+        }
     }
+
+
     //按块发送文件
     int curP=0;
     ifs.seekg(0, std::ios::end);
@@ -363,21 +434,36 @@ int sendFile(string path)
         send.dataLength=sliceSize;
         send.checkSum=cal_checkSum(send);
 
-        //停等机制
-//        if(sendPkg(send)==1)
-//        {
-//            return 1;  //FIN，该进入四次挥手
-//        }
-
-        //GBN，单线程实现
-        while(true)
-        {
-            int ret= rdt_sendPkg_GBN_oneThread(send);
-            if(ret!=2) break;
+        switch (protocal) {
+            case stopAndWait:
+            {
+                if(sendPkg(send)==1)
+                {
+                    return 1;  //FIN，该进入四次挥手
+                }
+                break;
+            }
+            case GBN_oneThread:
+            {
+                while(true)
+                {
+                    int ret= rdt_sendPkg_GBN_oneThread(send);
+                    if(ret==1) return 1;
+                    if(ret!=2) break;
+                }
+                break;
+            }
+            case GBN_mulThread:
+            {
+                while(true)
+                {
+                    int ret= rdt_sendPkg_GBN_mulThread(send);
+                    if(ret==1) return 1;
+                    if(ret!=2) break;
+                }
+            }
         }
         curP+=sliceSize;
-
-        //GBN，多线程实现
     }
     //发送最后一个slice的文件
     int lastLen=len<sliceSize? len:len-curP;
@@ -387,9 +473,34 @@ int sendFile(string path)
     send.flags=0|END;
     send.dataLength=lastLen;
     send.checkSum=cal_checkSum(send);
-    if(sendPkg(send)==1)
-    {
-        return 1;  //FIN，该进入四次挥手
+    switch (protocal) {
+        case stopAndWait:
+        {
+            if(sendPkg(send)==1)
+            {
+                return 1;  //FIN，该进入四次挥手
+            }
+            break;
+        }
+        case GBN_oneThread:
+        {
+            while(true)
+            {
+                int ret= rdt_sendPkg_GBN_oneThread(send);
+                if(ret==1) return 1;
+                if(ret!=2) break;
+            }
+            break;
+        }
+        case GBN_mulThread:
+        {
+            while(true)
+            {
+                int ret= rdt_sendPkg_GBN_mulThread(send);
+                if(ret==1) return 1;
+                if(ret!=2) break;
+            }
+        }
     }
     return 0;
 }
@@ -480,9 +591,13 @@ int main() {
     }
     cout<<"[LOG]: connection established."<<endl;
 
-    //GBN 创建辅助线程
-    //hThread[0] = CreateThread(NULL, NULL, send_gbn, reinterpret_cast<LPVOID>(sockSrv), 0, &dwThreadID[0]);
-    //hThread[1] = CreateThread(NULL, NULL, recv_gbn, reinterpret_cast<LPVOID>(sockSrv), 0, &dwThreadID[1]);
+    switch (protocal) {
+        case GBN_mulThread:
+        {
+            //创建接收辅助线程
+            hThread = CreateThread(NULL, NULL, recv_gbn, reinterpret_cast<LPVOID>(sockSrv), 0, &dwThreadID);  //GBN多线程 接收线程
+        }
+    }
 
     //传输数据
     for(int i=0;i<fileNum;i++)
@@ -557,5 +672,6 @@ int main() {
     QueryPerformanceCounter((LARGE_INTEGER*)&tail );
     cout<<sendByteCnt/(( tail-head) * 1000.0 / freq) <<"Byte/ms"<<endl;
     cout<<"Bye"<<endl;
+    system("pause");
     return 0;
 }
