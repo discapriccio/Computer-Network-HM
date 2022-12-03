@@ -247,6 +247,7 @@ void recvPkg_gbn(int& seqNum)  //GBN
         }
         //cout<<"here1"<<endl;
         if((getSeqNum()==0 && seqNum==-1) || getSeqNum()==seqNum+1) {seqNum++; gotNew=1;}
+        else {oooCnt++; cout<<oooCnt<<endl;}
         Package send;
         send.flags=0|ACK;
         send.ackNum=seqNum;
