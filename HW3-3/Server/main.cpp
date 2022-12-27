@@ -237,6 +237,7 @@ uint32_t base=0;
 uint32_t nextseqnum=0;
 const uint32_t N=100;
 queue<Package> sendBufQueue;
+vector<Package> sendBufQueueVec;
 
 long long headGBN, tailGBN, freqGBN;  //timers
 bool isTimerOn=1;  //1-定时器开着；0-关着
@@ -464,8 +465,8 @@ int allAccept()  //保证刚才发送的数据包被全部接收
 }
 
 //流水线，加入拥塞控制
-int cwnd=1;  //congestion window
-int ssthresh=64;  //阈值
+double cwnd=1;  //congestion window
+double ssthresh=64;  //阈值
 int dupACKcount=0;  //重复ACK数量
 uint32_t lastACKnum=0;  //上次收到的ack
 enum CROWD_CONTROL_STATE {slow_start,crowd_avoidance,quick_recovery,} ccs_machine=slow_start;  //拥塞避免状态机
@@ -512,7 +513,7 @@ int rdt_sendPkg_GBN_oneThread_RENO(Package send)
                     lastACKnum=getAckNum();
                     if(dupACKcount==3)
                     {
-                        ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
+                        ssthresh=(cwnd/2.0);
                         cwnd=ssthresh+3;
                         ccs_machine=quick_recovery;
                     }
@@ -526,12 +527,12 @@ int rdt_sendPkg_GBN_oneThread_RENO(Package send)
                     {
                         dupACKcount=0;
                         cout<<"***"<<cwnd<<endl;
-                        cwnd=cwnd+1*ceil(1/cwnd);
+                        cwnd=cwnd+1*(1/cwnd);
                     }
                     lastACKnum=getAckNum();
                     if(dupACKcount==3)
                     {
-                        ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
+                        ssthresh=(cwnd/2.0);
                         cwnd=ssthresh+3;
                         ccs_machine=quick_recovery;
                     }
@@ -584,14 +585,14 @@ int rdt_sendPkg_GBN_oneThread_RENO(Package send)
         {
             case slow_start:
             {
-                ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
+                ssthresh=(cwnd/2.0);
                 cwnd=1;
                 dupACKcount=0;
                 break;
             }
             case crowd_avoidance:
             {
-                ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
+                ssthresh=(cwnd/2.0);
                 cwnd=1;
                 dupACKcount=0;
                 ccs_machine=slow_start;
@@ -599,7 +600,7 @@ int rdt_sendPkg_GBN_oneThread_RENO(Package send)
             }
             case quick_recovery:
             {
-                ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
+                ssthresh=(cwnd/2.0);
                 cwnd=1;
                 dupACKcount=0;
                 ccs_machine=slow_start;
@@ -609,7 +610,7 @@ int rdt_sendPkg_GBN_oneThread_RENO(Package send)
         cout<<"[LOG]: "<<"WINDOW "<<"ccs_machine: "<<ccs_machine<<"\t"<<"cwnd:"<<cwnd<<"\t""ssthresh:"<<ssthresh<<endl;
     }
 
-    if(nextseqnum >= base + min(int(N),cwnd) ) return 2;  //发送窗口已满
+    if(nextseqnum >= base + min(int(N),int(floor(cwnd))) ) return 2;  //发送窗口已满
     sendBufQueue.push(send);
     sendBuf=toCharStar(send);
     sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
@@ -627,66 +628,11 @@ int rdt_sendPkg_GBN_oneThread_RENO(Package send)
     cout<<"[LOG]: "<<"WINDOW "<<"ccs_machine: "<<ccs_machine<<"\t"<<"cwnd:"<<cwnd<<"\t""ssthresh:"<<ssthresh<<endl;
 }
 
-int callCnt=0;
 int rdt_sendPkg_GBN_mulThread_RENO(Package send)
 {
-    callCnt++;
-    //判断定时器
-    QueryPerformanceCounter((LARGE_INTEGER*)&tailGBN);
-    //cout<<"freqGBN:"<<freqGBN<<endl;
-    //cout<<"tailGBN-headGBN) * 1000.0 / freqGBN:"<<(tailGBN-headGBN) * 1000.0 / freqGBN<<endl;
-    if(( tailGBN-headGBN) * 1000.0 / freqGBN > timeout && isTimerOn && callCnt!=1)  //ms
-    {
-        cout<<"time out"<<endl;
-        timeOutCnt++;
-        int iter=sendBufQueue.size();
-        for(int i=0;i<iter;i++)
-        {
-            Package send=sendBufQueue.front();
-            sendBufQueue.pop();
-            sendBufQueue.push(send);  //queue没有迭代器，于是用这种pop再push的方法完成，对其中所有元素重传
-            sendBuf=toCharStar(send);
-            sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
-            sendByteCnt+=send.getByteLength();
-            cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
-                <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
-        }
-        isTimerOn=1;
-        QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
-        QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
-
-        //拥塞控制
-        switch(ccs_machine)
-        {
-            case slow_start:
-            {
-                ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
-                cwnd=1;
-                dupACKcount=0;
-                break;
-            }
-            case crowd_avoidance:
-            {
-                ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
-                cwnd=1;
-                dupACKcount=0;
-                ccs_machine=slow_start;
-                break;
-            }
-            case quick_recovery:
-            {
-                ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
-                cwnd=1;
-                dupACKcount=0;
-                ccs_machine=slow_start;
-                break;
-            }
-        }
-        cout<<"[LOG]: "<<"WINDOW "<<"ccs_machine: "<<ccs_machine<<"\t"<<"cwnd:"<<cwnd<<"\t""ssthresh:"<<ssthresh<<endl;
-    }
-
-    if(nextseqnum > base + min(int(N),cwnd) ) return 2;  //发送窗口已满
-    sendBufQueue.push(send);
+    if(nextseqnum > base + min(int(N),int(floor(cwnd))) ) return 2;  //发送窗口已满
+    //sendBufQueue.push(send);
+    sendBufQueueVec.push_back(send);
     sendBuf=toCharStar(send);
     sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
     sendByteCnt+=send.getByteLength();
@@ -704,8 +650,66 @@ int rdt_sendPkg_GBN_mulThread_RENO(Package send)
 }
 DWORD WINAPI recv_gbn_RENO(LPVOID lparam)//接受信息的线程
 {
+    //int callCnt=0;
     while(1)
     {
+        //callCnt++;
+        //判断定时器
+        QueryPerformanceCounter((LARGE_INTEGER*)&tailGBN);
+        //cout<<"freqGBN:"<<freqGBN<<endl;
+        //cout<<"tailGBN-headGBN) * 1000.0 / freqGBN:"<<(tailGBN-headGBN) * 1000.0 / freqGBN<<endl;
+        if(( tailGBN-headGBN) * 1000.0 / freqGBN > timeout && isTimerOn )  //ms
+        {
+            cout<<"time out"<<endl;
+            timeOutCnt++;
+            //int iter=sendBufQueue.size();
+            int iter = sendBufQueueVec.size();
+            for(int i=0;i<iter;i++)
+            {
+                //Package send=sendBufQueue.front();
+                //sendBufQueue.pop();
+                //sendBufQueue.push(send);  //queue没有迭代器，于是用这种pop再push的方法完成，对其中所有元素重传
+                Package send = sendBufQueueVec[i];
+                sendBuf=toCharStar(send);
+                sendto(sockSrv,sendBuf,send.getByteLength(), 0,(SOCKADDR*) &addrClient, sizeof(addrClient));
+                sendByteCnt+=send.getByteLength();
+                cout<<"[LOG]: "<<"SEND "<<"seq:"<<send.seqNum<<"\t"<<"ack:"<<send.ackNum<<"\t"
+                    <<"flags:"<<(int)send.flags<<"\t"<<"checksum:"<<send.checkSum<<"\t"<<"dataLength:"<<send.dataLength<<endl;
+            }
+            isTimerOn=1;
+            QueryPerformanceFrequency((LARGE_INTEGER*)&freqGBN);
+            QueryPerformanceCounter((LARGE_INTEGER*)&headGBN);   //start timer
+
+            //拥塞控制
+            switch(ccs_machine)
+            {
+                case slow_start:
+                {
+                    ssthresh=(cwnd/2.0);
+                    cwnd=1;
+                    dupACKcount=0;
+                    break;
+                }
+                case crowd_avoidance:
+                {
+                    ssthresh=(cwnd/2.0);
+                    cwnd=1;
+                    dupACKcount=0;
+                    ccs_machine=slow_start;
+                    break;
+                }
+                case quick_recovery:
+                {
+                    ssthresh=(cwnd/2.0);
+                    cwnd=1;
+                    dupACKcount=0;
+                    ccs_machine=slow_start;
+                    break;
+                }
+            }
+            cout<<"[LOG]: "<<"WINDOW "<<"ccs_machine: "<<ccs_machine<<"\t"<<"cwnd:"<<cwnd<<"\t""ssthresh:"<<ssthresh<<endl;
+        }
+
         //cout<<"*******"<<endl;
         //接受ACK
         //setsockopt(sockSrv,SOL_SOCKET,SO_RCVTIMEO,(char*)&recvPatiency,sizeof(recvPatiency));
@@ -730,7 +734,11 @@ DWORD WINAPI recv_gbn_RENO(LPVOID lparam)//接受信息的线程
                 }
                 base=getAckNum()+1;
                 cout<<"[LOG]: "<<"WINDOW "<<"base:"<<base<<"\t""nextseqnum:"<<nextseqnum<<endl;
-                while(sendBufQueue.size()>0 && sendBufQueue.front().seqNum<=getAckNum())  sendBufQueue.pop();
+                while(sendBufQueueVec.size()>0 && sendBufQueueVec[0].seqNum<=getAckNum())
+                {
+                    vector< Package >::iterator k = sendBufQueueVec.begin();
+                    sendBufQueueVec.erase(k); // 删除第一个元素
+                }
                 if(base==nextseqnum) isTimerOn=0;
 
                 // 拥塞控制
@@ -748,7 +756,7 @@ DWORD WINAPI recv_gbn_RENO(LPVOID lparam)//接受信息的线程
                         lastACKnum=getAckNum();
                         if(dupACKcount==3)
                         {
-                            ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
+                            ssthresh=(cwnd/2.0);
                             cwnd=ssthresh+3;
                             ccs_machine=quick_recovery;
                         }
@@ -762,12 +770,12 @@ DWORD WINAPI recv_gbn_RENO(LPVOID lparam)//接受信息的线程
                         {
                             dupACKcount=0;
                             cout<<"***"<<cwnd<<endl;
-                            cwnd=cwnd+1*ceil(1/cwnd);
+                            cwnd=cwnd+1*(1/cwnd);
                         }
                         lastACKnum=getAckNum();
                         if(dupACKcount==3)
                         {
-                            ssthresh=ceil(cwnd/2.0);   //注意此处是2会出问题
+                            ssthresh=(cwnd/2.0);
                             cwnd=ssthresh+3;
                             ccs_machine=quick_recovery;
                         }
