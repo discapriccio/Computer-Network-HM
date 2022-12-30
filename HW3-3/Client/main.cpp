@@ -282,7 +282,7 @@ int main() {
     addrSrv.sin_family = AF_INET;
     addrSrv.sin_addr.s_addr = inet_addr("127.0.0.1");
 //    addrSrv.sin_port = htons(27015);
-    addrSrv.sin_port = htons(4001);
+    addrSrv.sin_port = htons(4002);
 
     srand((unsigned)time(NULL));
     //三次握手建立连接，client为主动方
